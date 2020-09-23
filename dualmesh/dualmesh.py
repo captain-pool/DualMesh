@@ -2,6 +2,37 @@
 
 import meshio
 import numpy as np
+import collections
+cell_block = collections.namedtuple("CellBlock", ["type", "cells"])
+
+# Source: https://codereview.stackexchange.com/questions/222623/pad-a-ragged-multidimensional-array-to-rectangular-shape
+def get_dimensions(array, level=0):
+    yield level, len(array)
+    try:
+        for row in array:
+            yield from get_dimensions(row, level + 1)
+    except TypeError: #not an iterable
+        pass
+
+def get_max_shape(array):
+    dimensions = collections.defaultdict(int)
+    for level, length in get_dimensions(array):
+        dimensions[level] = max(dimensions[level], length)
+    return [value for _, value in sorted(dimensions.items())]
+
+def iterate_nested_array(array, index=()):
+    try:
+        for idx, row in enumerate(array):
+            yield from iterate_nested_array(row, (*index, idx))
+    except TypeError: # final level
+        yield (*index, slice(len(array))), array
+
+def pad(array, fill_value):
+    dimensions = get_max_shape(array)
+    result = np.full(dimensions, fill_value)
+    for index, value in iterate_nested_array(array):
+        result[index] = value
+    return result
 
 
 def array_intersection(a, b):
@@ -64,9 +95,22 @@ def get_dual_points(mesh, index):
     assert isinstance(mesh, meshio.Mesh)
     ## For each type of cell do the following
     # Find the cells where the given index appears
-    _idxs = [np.where(x[1] == index)[0] for x in mesh.cells]
+    cells = getattr(mesh, "rect_cells", mesh.cells)
+    _idxs = [np.where(x[1] == index)[0] for x in cells]
     # Find the centers of all the cells
-    _vs = [mesh.points[x[1][_idxs[i]]].mean(axis=1) for i,x in enumerate(mesh.cells)]
+    _vs = []
+
+    for i, x in enumerate(mesh.cells):
+      points = []
+      totp = 0
+      totsum = []
+      for idx in _idxs[i]:
+        point = mesh.points[x[1][idx]]
+        totsum.append(point[None, ...].mean(axis=1))
+    #  if hasattr (mesh, "rect_cells"):
+    #    breakpoint()
+      _vs.append(np.vstack(totsum))
+    #__vs = [mesh.points[x[1][_idxs[i]]].mean(axis=1) for i,x in enumerate(mesh.cells)]
     return np.concatenate(_vs, axis=0)
 
 
@@ -82,7 +126,10 @@ def get_dual(mesh, order=False):
             Whether to reorder the indices of each cell, such that they are in anticlockwise order.
     """
     assert isinstance(mesh, meshio.Mesh)
-
+    mesh_type = mesh.cells[0].type.lower()
+    if mesh_type == "polygon":
+      cells = [cell_block("polygon", pad(cell.data, -1)) for cell in mesh.cells]
+      mesh.rect_cells = cells
     # Get the first set of points of the dual mesh
     new_points = get_dual_points(mesh, 0)
     vert_idxs = np.arange(len(new_points)).tolist()
@@ -92,12 +139,12 @@ def get_dual(mesh, order=False):
 
     # Create the containers for the points and the polygons of the dual mesh
     dual_points = new_points
-    dual_cells = {"polygon": [vert_idxs]}
+    key = "polygon" if mesh_type != "polygon" else "triangle"
+    dual_cells = {key: [vert_idxs]}
 
     for idx in range(1, len(mesh.points)):
         # Get the dual mesh points for a given mesh vertex
         new_points = get_dual_points(mesh, idx)
-
         # Find which of these new_points are already present in the dual_points
         inter = array_intersection(new_points, dual_points)
 
@@ -113,7 +160,7 @@ def get_dual(mesh, order=False):
             new_order = reorder_points(dual_points[vert_idxs])
             vert_idxs = np.array(vert_idxs)[new_order].tolist()
 
-        dual_cells["polygon"].append(vert_idxs)
+        dual_cells[key].append(vert_idxs)
 
     # Create the meshio mesh object
     dual = meshio.Mesh(dual_points, dual_cells)
