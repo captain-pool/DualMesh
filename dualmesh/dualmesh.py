@@ -98,19 +98,18 @@ def get_dual_points(mesh, index):
     cells = getattr(mesh, "rect_cells", mesh.cells)
     _idxs = [np.where(x[1] == index)[0] for x in cells]
     # Find the centers of all the cells
-    _vs = []
-
-    for i, x in enumerate(mesh.cells):
-      points = []
-      totp = 0
-      totsum = []
-      for idx in _idxs[i]:
-        point = mesh.points[x[1][idx]]
-        totsum.append(point[None, ...].mean(axis=1))
-    #  if hasattr (mesh, "rect_cells"):
-    #    breakpoint()
-      _vs.append(np.vstack(totsum))
-    #__vs = [mesh.points[x[1][_idxs[i]]].mean(axis=1) for i,x in enumerate(mesh.cells)]
+    if hasattr(mesh, "rect_cells"):
+      _vs = []
+      for i, x in enumerate(mesh.cells):
+        points = []
+        totp = 0
+        totsum = []
+        for idx in _idxs[i]:
+          point = mesh.points[x[1][idx]]
+          totsum.append(point[None, ...].mean(axis=1))
+        _vs.append(np.vstack(totsum))
+    else:
+      _vs = [mesh.points[x[1][_idxs[i]]].mean(axis=1) for i,x in enumerate(mesh.cells)]
     return np.concatenate(_vs, axis=0)
 
 
